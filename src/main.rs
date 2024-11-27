@@ -86,13 +86,19 @@ struct TokenData {
     cooking_subscriber: bool,
 }
 
-#[derive(Debug, Clone, Hash)]
+#[derive(Debug, Clone)]
 enum TokenValue {
     Email(String),
     Exp(u64),
     TechSubscriber(bool),
     SportsSubscriber(bool),
     CookingSubscriber(bool),
+}
+
+impl std::hash::Hash for TokenValue {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.to_string().hash(state)
+    }
 }
 
 impl ToString for TokenValue {

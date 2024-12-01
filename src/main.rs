@@ -5,12 +5,14 @@ use chrono::TimeDelta;
 use curve25519_dalek::ristretto::RistrettoPoint;
 use jsonwebtoken::PreToken;
 use jsonwebtoken::{
-    decode, encode, encode_acl, get_acl_pretoken_full_disclosure, get_current_timestamp,
-    new_local_pvd, Algorithm, DecodingKey, EncodingKey, Header, SignatureProvider, Validation,
+    decode, encode, encode_acl, get_acl_pretoken_full_disclosure, get_current_timestamp, Algorithm,
+    DecodingKey, EncodingKey, Header, SignatureProvider, Validation,
 };
 use rand::Rng;
+use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::ser::PrettyFormatter;
+use serde_json::{json, Value};
 use std::env;
 use std::fs;
 use std::fs::{DirEntry, File};
@@ -19,7 +21,6 @@ use std::net::TcpStream;
 use std::path::PathBuf;
 use tungstenite::{connect, stream::MaybeTlsStream, Message, WebSocket};
 use url::Url;
-use reqwest::blocking::Client;
 
 struct WebsocketProvider {
     socket: WebSocket<MaybeTlsStream<TcpStream>>,
@@ -45,7 +46,11 @@ fn new_websocket_provider(url: String) -> WebsocketProvider {
 impl SignatureProvider for WebsocketProvider {
     type Error = String;
 
-    fn prepare(&mut self, commitment: &RistrettoPoint, aux: String) -> Result<Vec<u8>, String> {
+    fn prepare(
+        &mut self,
+        commitment: &RistrettoPoint,
+        aux: String,
+    ) -> Result<Vec<u8>, Self::Error> {
         let _ = self.socket.send(Message::Text(
             serde_json::to_string(&UserMessage1 {
                 commitment: URL_SAFE_NO_PAD.encode(commitment.compress().as_bytes()),
@@ -77,7 +82,7 @@ impl SignatureProvider for WebsocketProvider {
     }
 }
 
-#[derive(Serialize,Deserialize,Clone,Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 struct TokenData {
     email: String,
     exp: u64,
@@ -86,55 +91,19 @@ struct TokenData {
     cooking_subscriber: bool,
 }
 
-#[derive(Debug, Clone)]
-enum TokenValue {
-    Email(String),
-    Exp(u64),
-    TechSubscriber(bool),
-    SportsSubscriber(bool),
-    CookingSubscriber(bool),
-}
-
-impl std::hash::Hash for TokenValue {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.to_string().hash(state)
-    }
-}
-
-impl ToString for TokenValue {
-    fn to_string(&self) -> String {
-        match self {
-            Self::Email(str) => str.clone(),
-            Self::Exp(exp) => exp.to_string(),
-            Self::TechSubscriber(has) => has.to_string(),
-            Self::SportsSubscriber(has) => has.to_string(),
-            Self::CookingSubscriber(has) => has.to_string(),
-        }
-    }
-}
-
 impl TokenData {
-    fn to_claims(&self) -> Vec<(String, TokenValue)> {
-        Vec::from([
-            (String::from("email"), TokenValue::Email(self.email.clone())),
-            (String::from("exp"), TokenValue::Exp(self.exp)),
-            (
-                String::from("tech_subscriber"),
-                TokenValue::TechSubscriber(self.tech_subscriber),
-            ),
-            (
-                String::from("sports_subscriber"),
-                TokenValue::SportsSubscriber(self.sports_subscriber),
-            ),
-            (
-                String::from("cooking_subscriber"),
-                TokenValue::CookingSubscriber(self.cooking_subscriber),
-            ),
-        ])
+    fn to_claims(&self) -> Value {
+        json!({
+            "cooking_subscriber": self.cooking_subscriber,
+            "email": self.email,
+            "exp": self.exp as u32,
+            "sports_subscriber": self.sports_subscriber,
+            "tech_subscriber": self.tech_subscriber,
+        })
     }
 }
 
-#[derive(Serialize,Deserialize,Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 struct StoredPreToken {
     data: TokenData,
     pretoken: PreToken,
@@ -184,10 +153,14 @@ fn get_tokens() {
             URL_SAFE_NO_PAD.encode(tk.randomness.to_bytes())
         ))
         .expect("asdf");
-        let _ = file.write_all(serde_json::to_string(&StoredPreToken{
-            data: tkd.clone(),
-            pretoken: tk,
-        }).expect("asdf").as_bytes());
+        let _ = file.write_all(
+            serde_json::to_string(&StoredPreToken {
+                data: tkd.clone(),
+                pretoken: tk,
+            })
+            .expect("asdf")
+            .as_bytes(),
+        );
     }
 }
 
@@ -204,11 +177,13 @@ fn read_tech() {
         .expect("asdf")
         .map(|result| result.expect("ok").path())
         .collect();
-    println!("{:?}", paths);
+
     let idx = rand::thread_rng().gen_range(0..paths.len());
     let stored_pretoken_str = fs::read_to_string(paths[idx].as_path()).expect("should open");
-    let stored_pretoken: StoredPreToken = serde_json::from_str(&stored_pretoken_str).expect("should be ok");
-    println!("{:?}", stored_pretoken);
+    let stored_pretoken: StoredPreToken =
+        serde_json::from_str(&stored_pretoken_str).expect("should be ok");
+
+    println!("hgello world");
 
     let token = encode_acl(
         &Header::new(Algorithm::AclFullPartialR255),
@@ -218,12 +193,18 @@ fn read_tech() {
     )
     .unwrap();
 
+    println!("{}", token);
+
     let client = Client::new();
-    let resp = client.get("http://localhost:8000/news").bearer_auth(token.clone()).send().expect("fine");
+    let resp = client
+        .get("http://localhost:8000/news")
+        .bearer_auth(token.clone())
+        .send()
+        .expect("fine");
 
     let article: Article = serde_json::from_str(&resp.text().expect("ok")).expect("ok");
 
-    println!("{:?}",article);
+    println!("{:?}", article);
 }
 
 fn main() {

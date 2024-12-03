@@ -196,7 +196,7 @@ fn read_tech() {
 
     let client = Client::new();
     let resp = client
-        .get("http://localhost:8000/news")
+        .get("http://localhost:8000/tech")
         .bearer_auth(token.clone())
         .send()
         .expect("fine");

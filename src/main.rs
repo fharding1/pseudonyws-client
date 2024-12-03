@@ -19,9 +19,9 @@ use std::fs::{DirEntry, File};
 use std::io::prelude::*;
 use std::net::TcpStream;
 use std::path::PathBuf;
+use std::time::Instant;
 use tungstenite::{connect, stream::MaybeTlsStream, Message, WebSocket};
 use url::Url;
-use std::time::Instant;
 
 struct WebsocketProvider {
     socket: WebSocket<MaybeTlsStream<TcpStream>>,
@@ -111,13 +111,9 @@ struct StoredPreToken {
 }
 
 fn get_pretoken(tkd: &TokenData, params: &UserParameters) -> PreToken {
-    // let mut localPVD = new_local_pvd(signing_key);
-    let mut remotePVD = new_websocket_provider("ws://140.211.166.98:8000/grant".to_string());
+    let mut remotePVD = new_websocket_provider("ws://localhost:8000/grant".to_string());
 
-    let pretoken = get_acl_pretoken_full_disclosure(&tkd.to_claims(), &mut remotePVD, params)
-        .expect("ok");
-
-    pretoken
+    get_acl_pretoken_full_disclosure(&tkd.to_claims(), &mut remotePVD, params).unwrap()
 }
 
 fn get_tokens() {

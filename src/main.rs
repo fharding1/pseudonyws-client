@@ -21,6 +21,7 @@ use std::net::TcpStream;
 use std::path::PathBuf;
 use tungstenite::{connect, stream::MaybeTlsStream, Message, WebSocket};
 use url::Url;
+use std::time::Instant;
 
 struct WebsocketProvider {
     socket: WebSocket<MaybeTlsStream<TcpStream>>,
@@ -109,22 +110,11 @@ struct StoredPreToken {
     pretoken: PreToken,
 }
 
-fn get_pretoken(tkd: &TokenData) -> PreToken {
-    let secret_key_bytes: [u8; SECRET_KEY_LENGTH] = [
-        157, 097, 177, 157, 239, 253, 090, 096, 186, 132, 074, 244, 146, 236, 044, 196, 068, 073,
-        197, 105, 123, 050, 105, 025, 112, 059, 172, 003, 028, 174, 127, 096,
-    ];
-
-    let signing_key: SigningKey = SigningKey::from_bytes(&secret_key_bytes);
-
+fn get_pretoken(tkd: &TokenData, params: &UserParameters) -> PreToken {
     // let mut localPVD = new_local_pvd(signing_key);
-    let mut remotePVD = new_websocket_provider("ws://localhost:8000/grant".to_string());
+    let mut remotePVD = new_websocket_provider("ws://140.211.166.98:8000/grant".to_string());
 
-    let user_params = UserParameters {
-        key: VerifyingKey::from(&signing_key),
-    };
-
-    let pretoken = get_acl_pretoken_full_disclosure(&tkd.to_claims(), &mut remotePVD, &user_params)
+    let pretoken = get_acl_pretoken_full_disclosure(&tkd.to_claims(), &mut remotePVD, params)
         .expect("ok");
 
     pretoken
@@ -146,8 +136,20 @@ fn get_tokens() {
         cooking_subscriber: true,
     };
 
-    for i in 0..10 {
-        let tk = get_pretoken(&tkd);
+    let secret_key_bytes: [u8; SECRET_KEY_LENGTH] = [
+        157, 097, 177, 157, 239, 253, 090, 096, 186, 132, 074, 244, 146, 236, 044, 196, 068, 073,
+        197, 105, 123, 050, 105, 025, 112, 059, 172, 003, 028, 174, 127, 096,
+    ];
+
+    let signing_key: SigningKey = SigningKey::from_bytes(&secret_key_bytes);
+
+    let user_params = UserParameters {
+        key: VerifyingKey::from(&signing_key),
+    };
+
+    let start = Instant::now();
+    for i in 0..1000 {
+        let tk = get_pretoken(&tkd, &user_params);
         let mut file = File::create(format!(
             "tokens/{}.json",
             URL_SAFE_NO_PAD.encode(tk.randomness.to_bytes())
@@ -162,6 +164,7 @@ fn get_tokens() {
             .as_bytes(),
         );
     }
+    println!("that took {:?}", start.elapsed());
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]

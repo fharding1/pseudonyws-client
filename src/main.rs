@@ -11,17 +11,14 @@ use jsonwebtoken::{
 use rand::Rng;
 use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
-use serde_json::ser::PrettyFormatter;
 use serde_json::{json, Value};
 use std::env;
 use std::fs;
-use std::fs::{DirEntry, File};
+use std::fs::{File};
 use std::io::prelude::*;
 use std::net::TcpStream;
 use std::path::PathBuf;
-use std::time::Instant;
 use tungstenite::{connect, stream::MaybeTlsStream, Message, WebSocket};
-use url::Url;
 
 struct WebsocketProvider {
     socket: WebSocket<MaybeTlsStream<TcpStream>>,
@@ -39,7 +36,9 @@ struct UserMessage2 {
 }
 
 fn new_websocket_provider(url: String) -> WebsocketProvider {
-    let (socket, _response) = connect(url).unwrap();
+    let (socket, _response) = connect(url.clone()).unwrap();
+
+    println!("connected to {}", url);
 
     WebsocketProvider { socket }
 }
@@ -52,6 +51,7 @@ impl SignatureProvider for WebsocketProvider {
         commitment: &RistrettoPoint,
         aux: String,
     ) -> Result<Vec<u8>, Self::Error> {
+        println!("sending commitment to attributes to server with auxillary information {}", aux);
         let _ = self.socket.send(Message::Text(
             serde_json::to_string(&UserMessage1 {
                 commitment: URL_SAFE_NO_PAD.encode(commitment.compress().as_bytes()),
@@ -64,10 +64,13 @@ impl SignatureProvider for WebsocketProvider {
             todo!()
         };
 
+        println!("got first response from the server");
+
         Ok(smsg1)
     }
 
     fn compute_presignature(&mut self, challenge_bytes: &[u8]) -> Result<Vec<u8>, String> {
+        println!("sending challenge to the server");
         let _ = self.socket.send(Message::Text(
             serde_json::to_string(&UserMessage2 {
                 challenge_bytes: URL_SAFE_NO_PAD.encode(challenge_bytes),
@@ -75,9 +78,12 @@ impl SignatureProvider for WebsocketProvider {
             .expect("asdf"),
         ));
 
+
         let Message::Binary(smsg2) = self.socket.read().expect("asdf") else {
             todo!()
         };
+
+        println!("got final presignature message from the server");
 
         Ok(smsg2)
     }
@@ -111,9 +117,8 @@ struct StoredPreToken {
 }
 
 fn get_pretoken(tkd: &TokenData, params: &UserParameters) -> PreToken {
-    let mut remotePVD = new_websocket_provider("ws://localhost:8000/grant".to_string());
-
-    get_acl_pretoken_full_disclosure(&tkd.to_claims(), &mut remotePVD, params).unwrap()
+    let mut remote_pvd = new_websocket_provider("ws://localhost:8000/grant".to_string());
+    get_acl_pretoken_full_disclosure(&tkd.to_claims(), &mut remote_pvd, params).unwrap()
 }
 
 fn get_tokens() {
@@ -143,13 +148,15 @@ fn get_tokens() {
         key: VerifyingKey::from(&signing_key),
     };
 
-    let start = Instant::now();
-    for i in 0..1000 {
+    for i in 0..5 {
+        println!("trying to get token {} from the user", i);
+        
         let tk = get_pretoken(&tkd, &user_params);
-        let mut file = File::create(format!(
+        let filename = format!(
             "tokens/{}.json",
             URL_SAFE_NO_PAD.encode(tk.randomness.to_bytes())
-        ))
+        );
+        let mut file = File::create(filename.clone())
         .expect("asdf");
         let _ = file.write_all(
             serde_json::to_string(&StoredPreToken {
@@ -159,8 +166,9 @@ fn get_tokens() {
             .expect("asdf")
             .as_bytes(),
         );
+
+        println!("finished writing token {} to disk at {}", i, filename);
     }
-    println!("that took {:?}", start.elapsed());
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -171,28 +179,29 @@ struct Article {
     date: String,
 }
 
-fn read_tech() {
+fn read_tech(disclose: &[String]) {
     let paths: Vec<PathBuf> = fs::read_dir("./tokens")
         .expect("asdf")
         .map(|result| result.expect("ok").path())
         .collect();
 
     let idx = rand::thread_rng().gen_range(0..paths.len());
-    let stored_pretoken_str = fs::read_to_string(paths[idx].as_path()).expect("should open");
+    let path = paths[idx].as_path();
+    let stored_pretoken_str = fs::read_to_string(path).expect("should open");
     let stored_pretoken: StoredPreToken =
         serde_json::from_str(&stored_pretoken_str).expect("should be ok");
 
-    println!("hgello world");
+    println!("read pretoken from disk at path {}, transforming it to only disclose {:?} claims", path.display(), disclose);
 
     let token = encode_acl(
         &Header::new(Algorithm::AclFullPartialR255),
         &stored_pretoken.data.to_claims(),
-        &Vec::from(["exp".to_string(), "tech_subscriber".to_string()]),
+        disclose,
         &stored_pretoken.pretoken,
     )
     .unwrap();
 
-    println!("{}", token);
+    println!("making request to server /tech endpoint with token: {}", token);
 
     let client = Client::new();
     let resp = client
@@ -204,6 +213,10 @@ fn read_tech() {
     let article: Article = serde_json::from_str(&resp.text().expect("ok")).expect("ok");
 
     println!("{:?}", article);
+
+    println!("going to delete token from disk because using it again would be dangerous");
+
+    fs::remove_file(path).expect("file shoudl be deleted");
 }
 
 fn main() {
@@ -211,7 +224,7 @@ fn main() {
     let command = args[1].clone();
     match command.as_str() {
         "get_tokens" => get_tokens(),
-        "read_tech" => read_tech(),
+        "read_tech" => read_tech(&args[2..]),
         _ => todo!(),
     }
 }
